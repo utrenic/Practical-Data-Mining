@@ -3,6 +3,7 @@ title: "Coursera - Practical Machine Learning Project"
 author: "Kelvin Leung"
 date: "7/10/2018"
 output:
+  pdf_document: default
   html_document: default
 ---
 
