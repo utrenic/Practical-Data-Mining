@@ -1,7 +1,7 @@
 ---
 title: "Coursera - Practical Machine Learning Project"
 author: "Kelvin Leung"
-date: "7/10/2018"
+date: "7/22/2018"
 output:
   pdf_document: default
   html_document: default
@@ -23,6 +23,9 @@ library(caret)
 ```
 ```{r rattle_lib}
 library(rattle)
+```
+```{r party_lib}
+library(party)
 ```
 
 ```{r rpart_lib}
@@ -81,9 +84,9 @@ str(test_clean)
 From the above, the columns of "train_clean" match with the columns of "test_clean", except for the last column, "problem_id". But we do not need to care about the "problem_id" column at this time.
 
 ## Build Classification models
-We use "decision tree" and "random forest" to build classification models.
+We use "recursive partiaion tree (rpart)", "random forest (randomForest)", and "Stochastic Gradient Boosting (gbm)" to build classification models and compare their performance.
 
-First, we partiion the training data into 2 parts and use cross validation method to validate the model we build.
+First, we partiion the training data into 2 parts and use cross validation method to validate the models we build.
 
 To ensure the reproductivity of this experiment, we initial the seed to 12345.
 
@@ -96,43 +99,104 @@ training <- train_clean[tr1,]
 testing <- train_clean[-tr1,]
 ```
 
-##Train with decision tree
+### Train with recursive partiaion tree (rpart)
 ```{r dtree}
-mDT <- rpart(classe~., data=training, method='class')
-fancyRpartPlot(mDT)
+# copy from the manual page of trainControl
+seeds <- vector(mode = "list", length = 51)
+for(i in 1:50) seeds[[i]] <- sample.int(1000, 22)
+seeds[[51]] <- sample.int(1000, 1)
+
+# we set the seed to 12345 to generate rpart model with 2 fold validation
+set.seed(12345)
+ctrl2 <- trainControl(allowParallel=T, seeds = seeds, method="cv", number=2)
+mDT2 <- train(classe~., data=training, method="rpart", model=TRUE, trControl=ctrl2)
+
+# using the same seed to generate another rpart model with 10 fold validation 
+set.seed(12345)
+ctrl10 <- trainControl(allowParallel=T, seeds= seeds, method="cv", number=10)
+mDT10 <- train(classe~., data=training, method="rpart", model=TRUE, trControl=ctrl10)
+
 ```
-##Confusion matrix using out-of-sample data in the decision tree model
+## Confusion matrix using out-of-sample data in the rpart tree model
+### We use "predict" to obtain out-of-sample predictions.
 ```{r dtree_predict}
-ctree_pred <- predict(mDT, newdata=testing, type='class')
-cm_ctree <- confusionMatrix(ctree_pred, testing$classe)
-cm_ctree
+rtree_pred_x2 <- predict(mDT2, newdata=testing)
+rtree_pred_x10 <- predict(mDT10, newdata=testing)
+
+cm_rtree_pred_x2 <- confusionMatrix(rtree_pred_x2, testing$classe)
+cm_rtree_pred_x10 <- confusionMatrix(rtree_pred_x10, testing$classe)
+```
+
+### Showing the confusion matrix:
+# rpart model with 2-fold validation
+```{r dtree_cm_x2}
+cm_rtree_pred_x2
+acc_cm_rtree_X2 <- round(cm_rtree_pred_x2$overall[1], 4)
+
+```
+
+# rpart model with 10-fold validation
+```{r dtree_cm_x10}
+cm_rtree_pred_x10
+acc_cm_rtree_X10 <- round(cm_rtree_pred_x10$overall[1], 4)
+```
+
+# Out-of-sample accuracy:
+```{r dtree_cm_accuracy}
+print.noquote(paste("Accurracy of rtree for CV n=2: ", acc_cm_rtree_X2))
+print.noquote(paste("Accurracy of rtree for CV n=10: ", acc_cm_rtree_X10))
+```
+
+From the results shown above, the accuracy of rpart using cross-validation with n=10 is `r acc_cm_rtree_X10` or `r acc_cm_rtree_X10*100`%, which is more accurate than that with n=2 (i.e. `r acc_cm_rtree_X2` or `r acc_cm_rtree_X2*100`%). 
+
+Also, the confusion matrix for rpart with 10-fold cross validation clearly shows that it has less confusion (i.e. spread away from a diagonal matrix or an identity matrix if we normalize the entires with the total number of entries) than that of rpart with 2-fold cross validation. Hence, 10-fold cross validation provides much better estimation performance than 2-fold cross validation model.
+
+### Plot of Decison Trees
+```{r decision_tree_n_2}
+fancyRpartPlot(mDT2$finalModel)
+```
+
+```{r decision_tree_n_10}
+fancyRpartPlot(mDT10$finalModel)
 ```
 
 ## Random Forest
-##Training Random forest with 100 trees.
+### Training Random forest with 100 trees.
+We generate a random forest model using 100 classifcation trees.
+
 ```{r rf_tree}
 set.seed(12345)
-mRF <- randomForest(classe ~., data=training, ntree=100)
+mRF <- randomForest(classe ~., data=training, ntree=100, importance = TRUE)
 ```
+I don't think it is neccessary to apply cross validation (or k-fold) in random forest becuase the performance of having out-of-bag in random forest is very simiar to cross validation. [ see https://stats.stackexchange.com/questions/283760/is-cross-validation-unnecessary-for-random-forest ].
 
-##Plotting the out-of-sample error of the random forest vs. num. of trees
+
+### Plotting the out-of-sample error of the random forest vs. num. of trees
 ```{r rf_plot}
-plot(mRF)
+plot(mRF, main='Plot of out-of-sample error for random forest vs. num. of trees')
+legend("right", colnames(mRF$err.rate), col=1:ncol(test_clean), cex=0.8, fill=1:ncol(test_data))
 ```
 
-##Plotting the important variables for the classification problem.
+
+## Plotting the important variables for the classification problem. 
 ```{r varImp}
 varImpPlot(mRF)
 ```
 
-##Confusion matrix using out-of-sample data in the random forest model
+From the plots above, it shows that "mean descrease accuracy" and "mean decrease gini". 
+
+
+### Confusion matrix using out-of-sample data in the random forest model
 ```{r rf_predict}
 pred_rf <- predict(mRF, newdata=testing, type='class')
 cm_rf <- confusionMatrix(pred_rf, testing$classe)
 cm_rf
 ```
 
-##Building the Boosting Model
+Notice that the confusion matrix of random forest model is less confused than that of rpart model above. 
+
+
+## Building the Boosting Model
 ```{r boosting}
 set.seed(12345)
 mbst <- train(classe ~., method="gbm", data=training, verbose=F, trControl=trainControl(method="cv", number=10))
@@ -143,31 +207,31 @@ mbst
 plot(mbst)
 ```
 
-##Out-of-sample using confusion matrix
+### Out-of-sample using confusion matrix
 ```{r predict_Boost}
 pred_bt <- predict(mbst, newdata=testing)
 confusionMatrix(pred_bt, testing$classe)
 ```
 
-##Classification of Uknonw test data
-# Decision Tree Model
+## Classification of Uknonw test data
+### Decision Tree Model
 ```{r dtree_unknown_test_data}
-pred_dT <- predict(mDT, newdata=test_clean, type= 'class')
+pred_dT <- predict(mDT2, newdata=test_clean)
 pred_dT
 ```
 
-##Random forest model
+### Random forest model
 ```{r rf_unknown_test}
-pred_rf <- predict(mRF, newdata=test_clean, type= 'class')
+pred_rf <- predict(mRF, newdata=test_clean)
 pred_rf
 ```
 
-##Stochastic Gradient Boosting (gbm)
+### Stochastic Gradient Boosting (gbm)
 ```{r rf_unknown_test_boost}
 pred_bt <- predict(mbst, newdata=test_clean)
 pred_bt
 ```
 
-I beleive that Random Forest model (n=100) and Stochastic Gradient Boosting (gbm) are very accurate in terms of the out-of-sample accuracy, i.e. 99.44% for Random Forest 96.39% for gbm and 72.67% for Decision Tree model respectively.  We can reply on either Random Forest or Stochastic Gradient Boosting (gbm) for the prediction. One caution is that the time it took to build Random Forest is much faster than that for gbm. Therefore, we would decide to use Random Forest to get the perliminary prediction result as much as possible.
+I beleive that Random Forest model (n=100) and Stochastic Gradient Boosting (gbm) are very accurate in terms of the out-of-sample accuracy, i.e. 99.44% for Random Forest 96.39% for gbm and ~50% for recursive partiaion tree (rpart) respectively.  We can reply on either Random Forest or Stochastic Gradient Boosting (gbm) for the prediction. One caution is that the time it took to build Random Forest is much faster than that for gbm. Therefore, we would decide to use Random Forest to get the perliminary prediction result as much as possible.
 
 
